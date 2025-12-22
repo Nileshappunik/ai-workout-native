@@ -1,4 +1,4 @@
-package com.demo.aiworlout
+package com.aiworkout.nativeplugin
 
 import android.os.Bundle
 import android.speech.RecognitionListener

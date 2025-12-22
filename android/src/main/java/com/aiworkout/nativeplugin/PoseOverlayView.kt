@@ -1,4 +1,4 @@
-package com.demo.aiworlout
+package com.aiworkout.nativeplugin
 
 import android.content.Context
 import android.graphics.*

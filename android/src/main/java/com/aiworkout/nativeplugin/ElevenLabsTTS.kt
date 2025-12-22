@@ -1,4 +1,4 @@
-package com.demo.aiworlout
+package com.aiworkout.nativeplugin
 
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
