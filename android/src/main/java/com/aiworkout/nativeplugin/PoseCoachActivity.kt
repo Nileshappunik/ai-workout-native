@@ -50,10 +50,6 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private var mode: Mode = Mode.SQUAT
     private var runState: RunState = RunState.IDLE
 
-    // Full-body distance guidance via shoulder width proxy (px)
-    private val SHOULDER_TOO_FAR = 220f
-    private val SHOULDER_TOO_CLOSE = 480f
-
     private var repCount = 0
     private var isDown = false   // squat state
 
