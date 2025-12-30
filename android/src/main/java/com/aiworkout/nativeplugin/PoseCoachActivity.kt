@@ -34,6 +34,7 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private lateinit var previewView: PreviewView
     private lateinit var overlay: PoseOverlayView
     private lateinit var statusText: TextView
+    private lateinit var tvCounter: TextView
 
     private lateinit var poseDetector: PoseDetector
     private lateinit var tts: TextToSpeech
@@ -44,14 +45,26 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private lateinit var speechRecognizer: SpeechRecognizer
     private lateinit var speechIntent: Intent
 
-    private enum class Mode { SQUAT, PLANK, YOGA_WARRIOR2 }
+    // Exercise modes
+    private enum class Mode {
+        SQUAT,
+        PLANK,
+        YOGA_WARRIOR2,
+        JUMPING_JACK,
+        PUSH_UP,
+        LUNGE,
+        BICEP_CURL,
+        SHOULDER_PRESS,
+        BURPEE
+    }
+
     private enum class RunState { IDLE, RUNNING, PAUSED }
 
     private var mode: Mode = Mode.SQUAT
     private var runState: RunState = RunState.IDLE
 
-    private var repCount = 0
-    private var isDown = false   // squat state
+    // Exercise counter instance
+    private val exerciseCounter = ExerciseCounter()
 
     private var isPerfectPosition = false
     private var hasAnnouncedStart = false
@@ -68,8 +81,8 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == "com.aiworkout.STOP_WORKOUT") {
                 runState = RunState.IDLE
-                speak("Workout stopped. You completed $repCount repetitions.")
-                finish() // Close the activity
+                speak("Workout stopped. You completed ${exerciseCounter.getCount()} repetitions.")
+                finish()
             }
         }
     }
@@ -85,12 +98,19 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         mode = when (modeString.lowercase()) {
             "plank" -> Mode.PLANK
             "yoga" -> Mode.YOGA_WARRIOR2
+            "jumping_jack", "jumpingjack" -> Mode.JUMPING_JACK
+            "push_up", "pushup" -> Mode.PUSH_UP
+            "lunge" -> Mode.LUNGE
+            "bicep_curl", "bicepcurl" -> Mode.BICEP_CURL
+            "shoulder_press", "shoulderpress" -> Mode.SHOULDER_PRESS
+            "burpee" -> Mode.BURPEE
             else -> Mode.SQUAT
         }
 
         previewView = findViewById(R.id.previewView)
         overlay = findViewById(R.id.overlay)
         statusText = findViewById(R.id.statusText)
+        tvCounter = findViewById(R.id.tvCounter)
 
         tts = TextToSpeech(this, this)
 
@@ -125,12 +145,10 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
         val btnStart = findViewById<Button>(R.id.btnStart)
         val btnStop = findViewById<Button>(R.id.btnStop)
-        val tvCounter = findViewById<TextView>(R.id.tvCounter)
 
         btnStart.setOnClickListener {
             runState = RunState.RUNNING
-            repCount = 0
-            isDown = false
+            exerciseCounter.reset()
             hasAnnouncedStart = false
             tvCounter.text = "Reps: 0"
             speak("Workout started. Get into position.")
@@ -138,8 +156,8 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
         btnStop.setOnClickListener {
             runState = RunState.IDLE
-            speak("Workout stopped. You completed $repCount repetitions.")
-            finish() // Close the activity
+            speak("Workout stopped. You completed ${exerciseCounter.getCount()} repetitions.")
+            finish()
         }
     }
 
@@ -210,17 +228,14 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                 .build()
 
-            analysis.setAnalyzer(cameraExecutor) { proxy ->
-                processFrame(proxy)
+            analysis.setAnalyzer(cameraExecutor) { imageProxy ->
+                processFrame(imageProxy)
             }
 
-            cameraProvider.unbindAll()
-            cameraProvider.bindToLifecycle(
-                this,
-                CameraSelector.DEFAULT_BACK_CAMERA,
-                preview,
-                analysis
+            val camera = cameraProvider.bindToLifecycle(
+                this, CameraSelector.DEFAULT_FRONT_CAMERA, preview, analysis
             )
+
         }, ContextCompat.getMainExecutor(this))
     }
 
@@ -230,132 +245,85 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             imageProxy.close()
             return
         }
-        val input = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
 
-        poseDetector.process(input)
+        val img = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
+
+        poseDetector.process(img)
             .addOnSuccessListener { pose ->
-                // Draw skeleton always
-                overlay.setPose(pose, imageProxy.width, imageProxy.height, imageProxy.imageInfo.rotationDegrees)
+                overlay.setPose(pose, img.width, img.height, img.rotationDegrees)
 
-                // If not running, just show pose + instructions
-                if (runState != RunState.RUNNING) {
-                    val setupMsg = checkBodySetup(pose, imageProxy.width, imageProxy.height)
+                if (runState == RunState.RUNNING) {
+                    val setupMsg = checkBodySetup(pose, img.width, img.height)
                     if (setupMsg != null) {
                         updateStatusThrottled(setupMsg)
-                        speakOnce(setupMsg)
+                        if (!isPerfectPosition) speakOnce(setupMsg)
                         isPerfectPosition = false
-                        hasAnnouncedStart = false
                     } else {
-                        updateStatusThrottled("Perfect! Ready to start. Press START or say 'start'.")
-                        if (!isPerfectPosition) {
-                            isPerfectPosition = true
-                            speakOnce("Perfect position. Say start when ready.")
+                        isPerfectPosition = true
+                        if (!hasAnnouncedStart) {
+                            speakOnce("Perfect! Begin your ${mode.name.lowercase().replace('_', ' ')}s.")
+                            hasAnnouncedStart = true
+                        }
+
+                        // Call appropriate exercise detection method
+                        when (mode) {
+                            Mode.SQUAT -> {
+                                exerciseCounter.updateSquat(pose, img.width, img.height)
+                                updateStatusThrottled("Mode: SQUAT • Reps: ${exerciseCounter.getCount()}")
+                            }
+                            Mode.JUMPING_JACK -> {
+                                exerciseCounter.updateJumpingJack(pose, img.width, img.height)
+                                updateStatusThrottled("Mode: JUMPING JACK • Reps: ${exerciseCounter.getCount()}")
+                            }
+                            Mode.PUSH_UP -> {
+                                exerciseCounter.updatePushUp(pose, img.width, img.height)
+                                updateStatusThrottled("Mode: PUSH UP • Reps: ${exerciseCounter.getCount()}")
+                            }
+                            Mode.LUNGE -> {
+                                exerciseCounter.updateLunge(pose, img.width, img.height)
+                                updateStatusThrottled("Mode: LUNGE • Reps: ${exerciseCounter.getCount()}")
+                            }
+                            Mode.PLANK -> {
+                                val plankTime = exerciseCounter.updatePlank(pose, img.width, img.height)
+                                updateStatusThrottled("Mode: PLANK • Time: ${plankTime}s")
+                                if (plankTime > 0 && plankTime % 10 == 0) {
+                                    speakOnce("$plankTime seconds")
+                                }
+                            }
+                            Mode.BICEP_CURL -> {
+                                exerciseCounter.updateBicepCurl(pose, img.width, img.height)
+                                updateStatusThrottled("Mode: BICEP CURL • Reps: ${exerciseCounter.getCount()}")
+                            }
+                            Mode.SHOULDER_PRESS -> {
+                                exerciseCounter.updateShoulderPress(pose, img.width, img.height)
+                                updateStatusThrottled("Mode: SHOULDER PRESS • Reps: ${exerciseCounter.getCount()}")
+                            }
+                            Mode.BURPEE -> {
+                                exerciseCounter.updateBurpee(pose, img.width, img.height)
+                                updateStatusThrottled("Mode: BURPEE • Reps: ${exerciseCounter.getCount()}")
+                            }
+                            Mode.YOGA_WARRIOR2 -> {
+                                coachWarrior2(pose)
+                            }
+                        }
+
+                        // Update rep counter display
+                        runOnUiThread {
+                            tvCounter.text = "Reps: ${exerciseCounter.getCount()}"
                         }
                     }
-                    imageProxy.close()
-                    return@addOnSuccessListener
                 }
-
-                // Running → check position is OK first
-                val setupMsg = checkBodySetup(pose, imageProxy.width, imageProxy.height)
-                if (setupMsg != null) {
-                    updateStatusThrottled("⚠️ $setupMsg")
-                    speakOnce(setupMsg)
-                    hasAnnouncedStart = false
-                    imageProxy.close()
-                    return@addOnSuccessListener
-                }
-
-                // Perfect → start or continue
-                if (!hasAnnouncedStart) {
-                    speakOnce("Begin your reps now!")
-                    hasAnnouncedStart = true
-                }
-
-                // Coach based on mode
-                when (mode) {
-                    Mode.SQUAT -> coachSquat(pose)
-                    Mode.PLANK -> coachPlank(pose)
-                    Mode.YOGA_WARRIOR2 -> coachWarrior2(pose)
-                }
-
+            }
+            .addOnFailureListener { e ->
+                // Handle error
+            }
+            .addOnCompleteListener {
                 imageProxy.close()
             }
-            .addOnFailureListener {
-                imageProxy.close()
-            }
-    }
-
-    // ---------- Squat Coaching ----------
-    private fun coachSquat(pose: Pose) {
-        val hip = pose.getPoseLandmark(PoseLandmark.LEFT_HIP)
-        val knee = pose.getPoseLandmark(PoseLandmark.LEFT_KNEE)
-        val ankle = pose.getPoseLandmark(PoseLandmark.LEFT_ANKLE)
-
-        if (hip == null || knee == null || ankle == null) {
-            updateStatusThrottled("Keep your left side visible for squat tracking")
-            return
-        }
-
-        val angle = angleDeg(hip.position, knee.position, ankle.position)
-
-        // DOWN
-        if (angle < 90 && !isDown) {
-            isDown = true
-        }
-
-        // UP → COUNT
-        if (angle > 160 && isDown) {
-            isDown = false
-            repCount++
-
-            runOnUiThread {
-                findViewById<TextView>(R.id.tvCounter).text = "Reps: $repCount"
-            }
-
-            // 🔊 ONLY NUMBER
-            speak(repCount.toString())
-        }
-    }
-
-
-    // ---------- Plank Coaching + Score ----------
-    private fun coachPlank(pose: Pose) {
-        val shoulder = pose.getPoseLandmark(PoseLandmark.LEFT_SHOULDER)
-        val hip = pose.getPoseLandmark(PoseLandmark.LEFT_HIP)
-        val ankle = pose.getPoseLandmark(PoseLandmark.LEFT_ANKLE)
-        val elbow = pose.getPoseLandmark(PoseLandmark.LEFT_ELBOW)
-
-        if (shoulder == null || hip == null || ankle == null || elbow == null) {
-            updateStatusThrottled("Keep shoulder, elbow, hip, ankle visible (side view works best)")
-            return
-        }
-
-        // Body straightness: angle at hip using shoulder-hip-ankle ~ 160–180 ideal
-        val hipAngle = angleDeg(shoulder.position, hip.position, ankle.position)
-        val straightScore = scoreInRange(hipAngle, 165.0, 180.0)
-
-        // Elbow under shoulder: x-distance small (simple heuristic)
-        val elbowShoulderDx = abs(elbow.position.x - shoulder.position.x)
-        val elbowScore = scoreInverse(elbowShoulderDx.toDouble(), goodMax = 35.0, badMin = 120.0)
-
-        val total = (0.7 * straightScore + 0.3 * elbowScore).toInt()
-
-        val msg = buildString {
-            append("Hip angle: ${hipAngle.toInt()}° • Score: $total")
-            if (hipAngle < 155) append(" • Raise hips a bit")
-            else if (hipAngle > 182) append(" • Don't over-arch")
-            if (elbowShoulderDx > 90) append(" • Bring elbow under shoulder")
-        }
-
-        updateStatusThrottled("Mode: PLANK • $msg")
-        if (total >= 85) speakOnce("Perfect plank")
-        else if (hipAngle < 155) speakOnce("Raise hips slightly")
     }
 
     // ---------- Yoga Warrior II Coaching + Score ----------
     private fun coachWarrior2(pose: Pose) {
-        // Front knee bend + arms straight line
         val ls = pose.getPoseLandmark(PoseLandmark.LEFT_SHOULDER)
         val rs = pose.getPoseLandmark(PoseLandmark.RIGHT_SHOULDER)
         val lw = pose.getPoseLandmark(PoseLandmark.LEFT_WRIST)
@@ -370,10 +338,9 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             return
         }
 
-        val kneeAngle = angleDeg(hip.position, knee.position, ankle.position) // front knee
+        val kneeAngle = angleDeg(hip.position, knee.position, ankle.position)
         val kneeScore = scoreInRange(kneeAngle, 80.0, 105.0)
 
-        // Arms horizontal: wrists y close to shoulders y (simple)
         val leftArmDy = abs(lw.position.y - ls.position.y)
         val rightArmDy = abs(rw.position.y - rs.position.y)
         val armScore = scoreInverse(((leftArmDy + rightArmDy) / 2.0), goodMax = 25.0, badMin = 140.0)
@@ -406,7 +373,6 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                     handleCommand(text.lowercase())
                 },
                 onErrorCallback = { error ->
-                    // restart listening on common errors
                     startListeningForCommands()
                 },
                 onEndCallback = {
@@ -414,7 +380,6 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 }
             )
         )
-
     }
 
     private fun startListeningForCommands() {
@@ -430,18 +395,57 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         when {
             cmd.contains("start") -> {
                 runState = RunState.RUNNING
-                repCount = 0
-                isDown = false
+                exerciseCounter.reset()
                 hasAnnouncedStart = false
                 speak("Workout started. Get into position.")
             }
             cmd.contains("stop") -> {
                 runState = RunState.IDLE
-                speak("Workout stopped. You did $repCount repetitions.")
+                speak("Workout stopped. You did ${exerciseCounter.getCount()} repetitions.")
+            }
+            // Add mode switching commands
+            cmd.contains("squat") -> {
+                mode = Mode.SQUAT
+                exerciseCounter.reset()
+                speak("Switched to squat mode")
+            }
+            cmd.contains("push up") || cmd.contains("pushup") -> {
+                mode = Mode.PUSH_UP
+                exerciseCounter.reset()
+                speak("Switched to push up mode")
+            }
+            cmd.contains("jumping jack") -> {
+                mode = Mode.JUMPING_JACK
+                exerciseCounter.reset()
+                speak("Switched to jumping jack mode")
+            }
+            cmd.contains("lunge") -> {
+                mode = Mode.LUNGE
+                exerciseCounter.reset()
+                speak("Switched to lunge mode")
+            }
+            cmd.contains("plank") -> {
+                mode = Mode.PLANK
+                exerciseCounter.reset()
+                speak("Switched to plank mode")
+            }
+            cmd.contains("bicep") || cmd.contains("curl") -> {
+                mode = Mode.BICEP_CURL
+                exerciseCounter.reset()
+                speak("Switched to bicep curl mode")
+            }
+            cmd.contains("shoulder press") -> {
+                mode = Mode.SHOULDER_PRESS
+                exerciseCounter.reset()
+                speak("Switched to shoulder press mode")
+            }
+            cmd.contains("burpee") -> {
+                mode = Mode.BURPEE
+                exerciseCounter.reset()
+                speak("Switched to burpee mode")
             }
         }
     }
-
 
     fun speak(text: String) {
         elevenTts.speak(text)
@@ -467,7 +471,7 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     override fun onInit(status: Int) {
         if (status == TextToSpeech.SUCCESS) {
             tts.language = Locale.US
-            speakOnce("Say Start to begin. You can say Squat, Plank, or Yoga.")
+            speakOnce("Say Start to begin. Current mode is ${mode.name.lowercase().replace('_', ' ')}.")
         }
     }
 
@@ -482,7 +486,6 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
     // ---------- Math Helpers ----------
     private fun angleDeg(a: android.graphics.PointF, b: android.graphics.PointF, c: android.graphics.PointF): Double {
-        // angle ABC at point B
         val abx = (a.x - b.x).toDouble()
         val aby = (a.y - b.y).toDouble()
         val cbx = (c.x - b.x).toDouble()
@@ -496,7 +499,6 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         return Math.toDegrees(acos(cos))
     }
 
-    // Score 0..100 where inside [min..max] gives 100, outside drops linearly
     private fun scoreInRange(value: Double, minOk: Double, maxOk: Double, margin: Double = 40.0): Int {
         return when {
             value in minOk..maxOk -> 100
@@ -511,7 +513,6 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         }
     }
 
-    // Score 0..100 where <= goodMax is 100, >= badMin is 0
     private fun scoreInverse(value: Double, goodMax: Double, badMin: Double): Int {
         if (value <= goodMax) return 100
         if (value >= badMin) return 0
