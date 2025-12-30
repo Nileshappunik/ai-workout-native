@@ -233,7 +233,7 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             }
 
             val camera = cameraProvider.bindToLifecycle(
-                this, CameraSelector.DEFAULT_FRONT_CAMERA, preview, analysis
+                this, CameraSelector.DEFAULT_BACK_CAMERA, preview, analysis
             )
 
         }, ContextCompat.getMainExecutor(this))
