@@ -8,9 +8,16 @@ export class AIWorkoutNativeWeb extends WebPlugin implements AIWorkoutNativePlug
     return options;
   }
 
-   async startWorkout(options?: { mode?: 'squat' | 'plank' | 'yoga' }): Promise<{
+  async startWorkout(options?: { 
+    mode?: 'squat' | 'plank' | 'yoga' | 'jumping_jack' | 'push_up' | 'lunge' | 'bicep_curl' | 'shoulder_press' | 'burpee' 
+  }): Promise<{
     success: boolean;
-    message: string;
+    positionConfirmed?: boolean;
+    finalReps?: number;
+    duration?: number;
+    status?: string;
+    mode?: string;
+    message?: string;
   }> {
     console.warn('AIWorkoutNative.startWorkout() is not available on web platform');
     return {

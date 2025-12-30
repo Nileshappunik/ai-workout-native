@@ -1,11 +1,20 @@
 package com.aiworkout.nativeplugin;
 
+import android.app.Activity;
+import android.content.BroadcastReceiver;
+import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
+import android.os.Build;
+
+import androidx.activity.result.ActivityResult;
+import androidx.core.content.ContextCompat;
 
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
+import com.getcapacitor.annotation.ActivityCallback;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
 @CapacitorPlugin(name = "AIWorkoutNative")
@@ -21,24 +30,76 @@ public class AIWorkoutNativePlugin extends Plugin {
         ret.put("value", implementation.echo(value));
         call.resolve(ret);
     }
-
+    
     // ✅ START AI WORKOUT (Launch Native Pose Screen)
+//    @PluginMethod
+//        public void startWorkout(PluginCall call) {
+//        try {
+//            // Get optional parameters
+//            String mode = call.getString("mode", "squat"); // squat, plank, yoga
+//
+//            Intent intent = new Intent(getContext(), PoseCoachActivity.class);
+//            intent.putExtra("workout_mode", mode);
+//            getActivity().startActivity(intent);
+//
+//            JSObject ret = new JSObject();
+//            ret.put("success", true);
+//            ret.put("message", "Workout started with mode: " + mode);
+//            call.resolve(ret);
+//        } catch (Exception e) {
+//            call.reject("Failed to start workout: " + e.getMessage());
+//        }
+//    }
+
+    // ✅ START AI WORKOUT (Launch Native Pose Screen with callback)
     @PluginMethod
     public void startWorkout(PluginCall call) {
         try {
             // Get optional parameters
-            String mode = call.getString("mode", "squat"); // squat, plank, yoga
+            String mode = call.getString("mode", "squat");
 
             Intent intent = new Intent(getContext(), PoseCoachActivity.class);
             intent.putExtra("workout_mode", mode);
-            getActivity().startActivity(intent);
 
-            JSObject ret = new JSObject();
-            ret.put("success", true);
-            ret.put("message", "Workout started with mode: " + mode);
-            call.resolve(ret);
+            // Use startActivityForResult to get callback
+            startActivityForResult(call, intent, "workoutResultCallback");
+
         } catch (Exception e) {
             call.reject("Failed to start workout: " + e.getMessage());
+        }
+    }
+
+    // ✅ Handle the result from PoseCoachActivity
+    @ActivityCallback
+    private void workoutResultCallback(PluginCall call, ActivityResult result) {
+        if (call == null) {
+            return;
+        }
+
+        JSObject ret = new JSObject();
+
+        if (result.getResultCode() == Activity.RESULT_OK && result.getData() != null) {
+            Intent data = result.getData();
+
+            // Get data from the activity
+            boolean positionConfirmed = data.getBooleanExtra("position_confirmed", false);
+            int finalReps = data.getIntExtra("final_reps", 0);
+            long duration = data.getLongExtra("duration", 0);
+            String status = data.getStringExtra("status");
+            String mode = data.getStringExtra("mode");
+
+            ret.put("success", true);
+            ret.put("positionConfirmed", positionConfirmed);
+            ret.put("finalReps", finalReps);
+            ret.put("duration", duration);
+            ret.put("status", status);
+            ret.put("mode", mode);
+
+            call.resolve(ret);
+        } else {
+            ret.put("success", false);
+            ret.put("message", "Workout cancelled or failed");
+            call.resolve(ret);
         }
     }
 

@@ -6,9 +6,16 @@ export interface AIWorkoutNativePlugin {
    * @param options - Optional workout configuration
    * @param options.mode - Workout mode: 'squat', 'plank', or 'yoga' (default: 'squat')
    */
-  startWorkout(options?: { mode?: 'squat' | 'plank' | 'yoga' }): Promise<{
+   startWorkout(options?: { 
+    mode?: 'squat' | 'plank' | 'yoga' | 'jumping_jack' | 'push_up' | 'lunge' | 'bicep_curl' | 'shoulder_press' | 'burpee' 
+  }): Promise<{
     success: boolean;
-    message: string;
+    positionConfirmed?: boolean;
+    finalReps?: number;
+    duration?: number;
+    status?: string;
+    mode?: string;
+    message?: string;
   }>;
 
   /**

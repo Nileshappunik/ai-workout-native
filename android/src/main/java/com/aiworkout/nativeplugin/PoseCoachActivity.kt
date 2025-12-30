@@ -12,6 +12,7 @@ import android.os.Bundle
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
+import android.util.Log
 import android.widget.Button
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
@@ -44,6 +45,10 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
     private lateinit var speechRecognizer: SpeechRecognizer
     private lateinit var speechIntent: Intent
+
+    // ✅ ADD THESE NEW PROPERTIES
+    private var workoutStartTime = 0L
+    private var positionConfirmedSent = false
 
     // Exercise modes
     private enum class Mode {
@@ -82,10 +87,13 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             if (intent?.action == "com.aiworkout.STOP_WORKOUT") {
                 runState = RunState.IDLE
                 speak("Workout stopped. You completed ${exerciseCounter.getCount()} repetitions.")
-                finish()
+               // finish()
+                sendWorkoutResults(completed = false)  // ✅ MODIFIED
             }
         }
     }
+
+
 
     @SuppressLint("UnspecifiedRegisterReceiverFlag")
     @ExperimentalGetImage
@@ -150,6 +158,8 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             runState = RunState.RUNNING
             exerciseCounter.reset()
             hasAnnouncedStart = false
+            isPerfectPosition = false
+            positionConfirmedSent = false  // ✅ ADDED
             tvCounter.text = "Reps: 0"
             speak("Workout started. Get into position.")
         }
@@ -157,8 +167,15 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         btnStop.setOnClickListener {
             runState = RunState.IDLE
             speak("Workout stopped. You completed ${exerciseCounter.getCount()} repetitions.")
-            finish()
+            sendWorkoutResults(completed = false)  // ✅ MODIFIED
+            //finish()
         }
+    }
+
+    // ✅ ADD THIS METHOD - Handle back button press
+    override fun onBackPressed() {
+        sendWorkoutResults(completed = false)
+        super.onBackPressed()
     }
 
     private fun checkBodySetup(
@@ -261,6 +278,9 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                     } else {
                         isPerfectPosition = true
                         if (!hasAnnouncedStart) {
+                            // Send position confirmation callback
+                            sendPositionConfirmed()
+                            workoutStartTime = System.currentTimeMillis()
                             speakOnce("Perfect! Begin your ${mode.name.lowercase().replace('_', ' ')}s.")
                             hasAnnouncedStart = true
                         }
@@ -518,5 +538,40 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         if (value >= badMin) return 0
         val t = (value - goodMax) / (badMin - goodMax)
         return (100 * (1.0 - t)).toInt().coerceIn(0, 100)
+    }
+
+    // ✅ MODIFIED - Send position confirmation via broadcast
+    private fun sendPositionConfirmed() {
+        Log.e("NileshPosition","positionConfirmedSent:- $positionConfirmedSent")
+        if (!positionConfirmedSent) {
+            // Send broadcast to notify plugin immediately
+            val broadcastIntent = Intent("com.aiworkout.POSITION_CONFIRMED")
+            broadcastIntent.putExtra("position_confirmed", true)
+            broadcastIntent.putExtra("status", "Position confirmed - workout starting")
+            broadcastIntent.putExtra("timestamp", System.currentTimeMillis())
+            broadcastIntent.putExtra("mode", mode.name)
+            sendBroadcast(broadcastIntent)
+
+            positionConfirmedSent = true
+            workoutStartTime = System.currentTimeMillis()
+
+            Log.e("NileshPosition", "Broadcast sent - position confirmed")
+        }
+    }
+
+    // ✅ ADD THIS METHOD - Send final workout results
+    private fun sendWorkoutResults(completed: Boolean = true) {
+        val duration = if (workoutStartTime > 0) {
+            (System.currentTimeMillis() - workoutStartTime) / 1000
+        } else 0L
+
+        val resultIntent = Intent()
+        resultIntent.putExtra("position_confirmed", true)
+        resultIntent.putExtra("final_reps", exerciseCounter.getCount())
+        resultIntent.putExtra("duration", duration)
+        resultIntent.putExtra("status", if (completed) "Workout completed" else "Workout stopped")
+        resultIntent.putExtra("mode", mode.name)
+        setResult(RESULT_OK, resultIntent)
+        finish()
     }
 }
