@@ -24,13 +24,20 @@ import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
-import androidx.camera.core.*
+import androidx.camera.core.CameraSelector
+import androidx.camera.core.ExperimentalGetImage
+import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.ImageProxy
+import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.google.mlkit.vision.common.InputImage
-import com.google.mlkit.vision.pose.*
+import com.google.mlkit.vision.pose.Pose
+import com.google.mlkit.vision.pose.PoseDetection
+import com.google.mlkit.vision.pose.PoseDetector
+import com.google.mlkit.vision.pose.PoseLandmark
 import com.google.mlkit.vision.pose.accurate.AccuratePoseDetectorOptions
 import java.util.Locale
 import java.util.concurrent.Executors
@@ -88,9 +95,7 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private val stopWorkoutReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == "com.aiworkout.STOP_WORKOUT") {
-                runState = RunState.IDLE
-                speak("Workout stopped. You completed ${exerciseCounter.getCount()} repetitions.")
-                sendWorkoutResults(completed = false)
+                stopButtonClickHandle()
             }
         }
     }
@@ -135,15 +140,7 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
         setupSpeechRecognizer()
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(
-                stopWorkoutReceiver,
-                IntentFilter("com.aiworkout.STOP_WORKOUT"),
-                Context.RECEIVER_NOT_EXPORTED
-            )
-        } else {
-            registerReceiver(stopWorkoutReceiver, IntentFilter("com.aiworkout.STOP_WORKOUT"))
-        }
+        registerReceiver(stopWorkoutReceiver, IntentFilter("com.aiworkout.STOP_WORKOUT"))
 
         if (!hasPermissions()) {
             ActivityCompat.requestPermissions(
@@ -170,30 +167,7 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         }
 
         btnStop.setOnClickListener {
-            runState = RunState.IDLE
-            speak("Workout stopped. You completed ${exerciseCounter.getCount()} repetitions.")
-            sendWorkoutResults(completed = false)
-        }
-    }
-    @SuppressLint("ClickableViewAccessibility")
-    private fun setupDraggableCameraOld() {
-        cameraContainer.setOnTouchListener { view, event ->
-            if (!isMinimized) return@setOnTouchListener false
-
-            when (event.action) {
-                MotionEvent.ACTION_DOWN -> {
-                    dX = view.x - event.rawX
-                    dY = view.y - event.rawY
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    view.animate()
-                        .x(event.rawX + dX)
-                        .y(event.rawY + dY)
-                        .setDuration(0)
-                        .start()
-                }
-            }
-            true
+            stopButtonClickHandle()
         }
     }
     @SuppressLint("ClickableViewAccessibility")
@@ -219,52 +193,6 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     }
 
     // ✅ MODIFIED - Minimize camera and make background transparent
-    private fun minimizeCameraViewOld() {
-        if (isMinimized) return
-
-        isMinimized = true
-
-        // Make root background transparent
-        rootContainer.setBackgroundColor(Color.TRANSPARENT)
-
-        val params = cameraContainer.layoutParams as FrameLayout.LayoutParams
-
-        val widthPx = (150 * resources.displayMetrics.density).toInt()
-        val heightPx = (200 * resources.displayMetrics.density).toInt()
-        val marginPx = (16 * resources.displayMetrics.density).toInt()
-
-        params.width = widthPx
-        params.height = heightPx
-        params.gravity = android.view.Gravity.TOP or android.view.Gravity.END
-        params.setMargins(0, marginPx, marginPx, 0)
-
-        cameraContainer.layoutParams = params
-        cameraContainer.elevation = 10f
-
-        // Add border and rounded corners
-        cameraContainer.setBackgroundColor(Color.BLACK)
-        cameraContainer.setPadding(4, 4, 4, 4)
-
-        // Hide all UI except counter
-        findViewById<Button>(R.id.btnStart).visibility = View.GONE
-        findViewById<Button>(R.id.btnStop).visibility = View.GONE
-        statusText.visibility = View.GONE
-
-        // Position counter below camera
-        val counterParams = tvCounter.layoutParams as FrameLayout.LayoutParams
-        counterParams.width = widthPx
-        counterParams.gravity = android.view.Gravity.TOP or android.view.Gravity.END
-        counterParams.setMargins(0, marginPx + heightPx + 8, marginPx, 0)
-        tvCounter.layoutParams = counterParams
-        tvCounter.setBackgroundColor(0xCC000000.toInt())  // Semi-transparent black
-        tvCounter.setPadding(8, 8, 8, 8)
-        tvCounter.textAlignment = View.TEXT_ALIGNMENT_CENTER
-
-        Log.d("PoseCoach", "Camera minimized - background transparent")
-
-        // ✅ NEW - Send broadcast to show Ionic UI
-        sendIonicShowUIBroadcast()
-    }
     private fun minimizeCameraView() {
         if (isMinimized) return
         isMinimized = true
@@ -297,41 +225,6 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         sendIonicShowUIBroadcast()
     }
 
-    private fun restoreCameraViewOld() {
-        if (!isMinimized) return
-
-        isMinimized = false
-
-        // Restore opaque background
-        rootContainer.setBackgroundColor(Color.BLACK)
-
-        val params = cameraContainer.layoutParams as FrameLayout.LayoutParams
-        params.width = ViewGroup.LayoutParams.MATCH_PARENT
-        params.height = ViewGroup.LayoutParams.MATCH_PARENT
-        params.gravity = android.view.Gravity.NO_GRAVITY
-        params.setMargins(0, 0, 0, 0)
-
-        cameraContainer.layoutParams = params
-        cameraContainer.elevation = 0f
-        cameraContainer.setBackgroundColor(Color.TRANSPARENT)
-        cameraContainer.setPadding(0, 0, 0, 0)
-
-        // Show all UI
-        findViewById<Button>(R.id.btnStart).visibility = View.VISIBLE
-        findViewById<Button>(R.id.btnStop).visibility = View.VISIBLE
-        statusText.visibility = View.VISIBLE
-
-        // Reset counter position
-        val counterParams = tvCounter.layoutParams as FrameLayout.LayoutParams
-        counterParams.width = ViewGroup.LayoutParams.WRAP_CONTENT
-        counterParams.gravity = android.view.Gravity.BOTTOM or android.view.Gravity.END
-        counterParams.setMargins(0, 0, 16, 16)
-        tvCounter.layoutParams = counterParams
-        tvCounter.setBackgroundColor(Color.TRANSPARENT)
-        tvCounter.setPadding(0, 0, 0, 0)
-
-        Log.d("PoseCoach", "Camera restored to full screen")
-    }
     private fun restoreCameraView() {
         if (!isMinimized) return
         isMinimized = false
@@ -357,12 +250,12 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     }
 
     override fun onBackPressed() {
-        if (isMinimized) {
-            restoreCameraView()
-        } else {
-            sendWorkoutResults(completed = false)
-            super.onBackPressed()
-        }
+//        if (isMinimized) {
+//            restoreCameraView()
+//        } else {
+//            sendWorkoutResults(completed = false)
+//            super.onBackPressed()
+//        }
     }
 
     private fun checkBodySetup(pose: Pose,imageWidth: Int,imageHeight: Int): String? {
@@ -628,8 +521,14 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         }
     }
 
-    fun speak(text: String) {
+    private fun speak(text: String) {
         elevenTts.speak(text)
+    }
+
+    private fun stopButtonClickHandle() {
+        runState = RunState.IDLE
+        speak("Workout stopped. You completed ${exerciseCounter.getCount()} repetitions.")
+        sendWorkoutResults(completed = false)
     }
 
     private fun updateStatusThrottled(message: String) {
@@ -736,14 +635,37 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         setResult(RESULT_OK, resultIntent)
         finish()
     }
+
+
+    
     //Disable touch on Android window when minimized
     private fun enableTouchPassThrough() {
+        window.setFlags(
+            WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
+            WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+        )
+    }
+    private fun disableTouchPassThrough() {
+        window.clearFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE)
+    }
+
+    private fun enableTouchPassThroughNew() {
+        // Make only the rootContainer pass through touches
+        rootContainer.isClickable = false
+        rootContainer.isFocusable = false
+
+        // Keep floatingContainer interactive
+        floatingContainer.isClickable = true
+        floatingContainer.isFocusable = true
+
         window.setFlags(
             WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
             WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
         )
     }
-    private fun disableTouchPassThrough() {
+    private fun disableTouchPassThroughNew() {
+        rootContainer.isClickable = true
+        rootContainer.isFocusable = true
         window.clearFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL)
     }
 
