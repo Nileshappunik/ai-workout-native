@@ -8,12 +8,14 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.graphics.drawable.ColorDrawable
 import android.os.Build
 import android.os.Bundle
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
 import android.util.Log
+import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
@@ -44,6 +46,7 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private lateinit var tvCounter: TextView
     private lateinit var cameraContainer: FrameLayout
     private lateinit var rootContainer: FrameLayout  // ✅ NEW
+    private lateinit var floatingContainer: FrameLayout  // ✅ NEW
 
     private lateinit var poseDetector: PoseDetector
     private lateinit var tts: TextToSpeech
@@ -97,14 +100,8 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // ✅ NEW - Make activity transparent
-        window.setFlags(
-            WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-            WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
-        )
-        window.statusBarColor = Color.TRANSPARENT
-        window.navigationBarColor = Color.TRANSPARENT
-
+        // ✅ Make the entire activity window transparent
+        window.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
         setContentView(R.layout.activity_pose_coach)
 
         val modeString = intent.getStringExtra("workout_mode") ?: "squat"
@@ -119,7 +116,7 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             "burpee" -> Mode.BURPEE
             else -> Mode.SQUAT
         }
-
+        floatingContainer = findViewById(R.id.floatingContainer)
         rootContainer = findViewById(R.id.rootContainer)  // ✅ NEW
         cameraContainer = findViewById(R.id.cameraContainer)
         previewView = findViewById(R.id.previewView)
@@ -178,10 +175,30 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             sendWorkoutResults(completed = false)
         }
     }
+    @SuppressLint("ClickableViewAccessibility")
+    private fun setupDraggableCameraOld() {
+        cameraContainer.setOnTouchListener { view, event ->
+            if (!isMinimized) return@setOnTouchListener false
 
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    dX = view.x - event.rawX
+                    dY = view.y - event.rawY
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    view.animate()
+                        .x(event.rawX + dX)
+                        .y(event.rawY + dY)
+                        .setDuration(0)
+                        .start()
+                }
+            }
+            true
+        }
+    }
     @SuppressLint("ClickableViewAccessibility")
     private fun setupDraggableCamera() {
-        cameraContainer.setOnTouchListener { view, event ->
+        floatingContainer.setOnTouchListener { view, event ->
             if (!isMinimized) return@setOnTouchListener false
 
             when (event.action) {
@@ -202,7 +219,7 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     }
 
     // ✅ MODIFIED - Minimize camera and make background transparent
-    private fun minimizeCameraView() {
+    private fun minimizeCameraViewOld() {
         if (isMinimized) return
 
         isMinimized = true
@@ -248,8 +265,39 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         // ✅ NEW - Send broadcast to show Ionic UI
         sendIonicShowUIBroadcast()
     }
+    private fun minimizeCameraView() {
+        if (isMinimized) return
+        isMinimized = true
 
-    private fun restoreCameraView() {
+        rootContainer.setBackgroundColor(Color.TRANSPARENT)
+        enableTouchPassThrough()   // ✅ KEY LINE
+        val params = floatingContainer.layoutParams as FrameLayout.LayoutParams
+        val widthPx = (150 * resources.displayMetrics.density).toInt()
+        val heightPx = (200 * resources.displayMetrics.density).toInt()
+        val marginPx = (16 * resources.displayMetrics.density).toInt()
+
+        params.width = widthPx
+        params.height = heightPx + (40 * resources.displayMetrics.density).toInt()
+        params.gravity = Gravity.TOP or Gravity.END
+        params.setMargins(0, marginPx, marginPx, 0)
+
+        floatingContainer.layoutParams = params
+        floatingContainer.elevation = 12f
+        floatingContainer.setBackgroundColor(Color.BLACK)
+        floatingContainer.setPadding(4, 4, 4, 4)
+
+        // Counter styling
+        tvCounter.setBackgroundColor(0xCC000000.toInt())
+        tvCounter.textAlignment = View.TEXT_ALIGNMENT_CENTER
+
+        findViewById<Button>(R.id.btnStart).visibility = View.GONE
+        findViewById<Button>(R.id.btnStop).visibility = View.GONE
+        statusText.visibility = View.GONE
+
+        sendIonicShowUIBroadcast()
+    }
+
+    private fun restoreCameraViewOld() {
         if (!isMinimized) return
 
         isMinimized = false
@@ -284,6 +332,29 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
         Log.d("PoseCoach", "Camera restored to full screen")
     }
+    private fun restoreCameraView() {
+        if (!isMinimized) return
+        isMinimized = false
+
+        rootContainer.setBackgroundColor(Color.BLACK)
+        disableTouchPassThrough()   // ✅ restore touches
+
+        val params = floatingContainer.layoutParams as FrameLayout.LayoutParams
+        params.width = ViewGroup.LayoutParams.MATCH_PARENT
+        params.height = ViewGroup.LayoutParams.MATCH_PARENT
+        params.gravity = Gravity.NO_GRAVITY
+        params.setMargins(0, 0, 0, 0)
+
+        floatingContainer.layoutParams = params
+        floatingContainer.elevation = 0f
+        floatingContainer.setBackgroundColor(Color.TRANSPARENT)
+
+        tvCounter.setBackgroundColor(Color.TRANSPARENT)
+
+        findViewById<Button>(R.id.btnStart).visibility = View.VISIBLE
+        findViewById<Button>(R.id.btnStop).visibility = View.VISIBLE
+        statusText.visibility = View.VISIBLE
+    }
 
     override fun onBackPressed() {
         if (isMinimized) {
@@ -294,11 +365,7 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         }
     }
 
-    private fun checkBodySetup(
-        pose: Pose,
-        imageWidth: Int,
-        imageHeight: Int
-    ): String? {
+    private fun checkBodySetup(pose: Pose,imageWidth: Int,imageHeight: Int): String? {
         val ls = pose.getPoseLandmark(PoseLandmark.LEFT_SHOULDER)
         val rs = pose.getPoseLandmark(PoseLandmark.RIGHT_SHOULDER)
         val la = pose.getPoseLandmark(PoseLandmark.LEFT_ANKLE)
@@ -669,4 +736,17 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         setResult(RESULT_OK, resultIntent)
         finish()
     }
+    //Disable touch on Android window when minimized
+    private fun enableTouchPassThrough() {
+        window.setFlags(
+            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+        )
+    }
+    private fun disableTouchPassThrough() {
+        window.clearFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL)
+    }
+
+
+
 }

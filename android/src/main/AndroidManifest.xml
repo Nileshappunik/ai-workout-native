@@ -16,7 +16,7 @@
             android:name=".PoseCoachActivity"
             android:exported="false"
             android:screenOrientation="portrait"
-            android:theme="@style/Theme.AppCompat.Light.NoActionBar"
+            android:theme="@style/TransparentTheme"
             android:configChanges="orientation|screenSize|keyboardHidden" />
     </application>
 
