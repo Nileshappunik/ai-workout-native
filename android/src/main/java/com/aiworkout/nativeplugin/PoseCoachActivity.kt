@@ -181,9 +181,32 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                     dY = view.y - event.rawY
                 }
                 MotionEvent.ACTION_MOVE -> {
+                    // Calculate new position
+                    val newX = event.rawX + dX
+                    val newY = event.rawY + dY
+
+                    // Get screen dimensions
+                    val displayMetrics = resources.displayMetrics
+                    val screenWidth = displayMetrics.widthPixels
+                    val screenHeight = displayMetrics.heightPixels
+
+                    // Get container dimensions
+                    val containerWidth = view.width
+                    val containerHeight = view.height
+
+                    // Define boundaries - FULL SCREEN (removed bottom restriction)
+                    val minX = 0f
+                    val maxX = (screenWidth - containerWidth).toFloat()
+                    val minY = 0f
+                    val maxY = (screenHeight - containerHeight).toFloat()  // ✅ No bottom margin restriction
+
+                    // Constrain position within full screen boundaries
+                    val constrainedX = newX.coerceIn(minX, maxX)
+                    val constrainedY = newY.coerceIn(minY, maxY)
+
                     view.animate()
-                        .x(event.rawX + dX)
-                        .y(event.rawY + dY)
+                        .x(constrainedX)
+                        .y(constrainedY)
                         .setDuration(0)
                         .start()
                 }
@@ -198,23 +221,23 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         isMinimized = true
 
         rootContainer.setBackgroundColor(Color.TRANSPARENT)
-        enableTouchPassThrough()   // ✅ KEY LINE
-        val params = floatingContainer.layoutParams as FrameLayout.LayoutParams
+
         val widthPx = (150 * resources.displayMetrics.density).toInt()
         val heightPx = (200 * resources.displayMetrics.density).toInt()
         val marginPx = (16 * resources.displayMetrics.density).toInt()
 
+        // Update floating container position - TOP RIGHT
+        val params = floatingContainer.layoutParams as FrameLayout.LayoutParams
         params.width = widthPx
         params.height = heightPx + (40 * resources.displayMetrics.density).toInt()
-        params.gravity = Gravity.TOP or Gravity.END
-        params.setMargins(0, marginPx, marginPx, 0)
+        params.gravity = Gravity.TOP or Gravity.END  // ✅ TOP RIGHT position
+        params.setMargins(0, marginPx, marginPx, 0)  // ✅ Top and right margins
 
         floatingContainer.layoutParams = params
         floatingContainer.elevation = 12f
         floatingContainer.setBackgroundColor(Color.BLACK)
         floatingContainer.setPadding(4, 4, 4, 4)
 
-        // Counter styling
         tvCounter.setBackgroundColor(0xCC000000.toInt())
         tvCounter.textAlignment = View.TEXT_ALIGNMENT_CENTER
 
@@ -222,6 +245,7 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         findViewById<Button>(R.id.btnStop).visibility = View.GONE
         statusText.visibility = View.GONE
 
+        enableTouchPassThrough()
         sendIonicShowUIBroadcast()
     }
 
@@ -637,38 +661,55 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     }
 
 
-    
     //Disable touch on Android window when minimized
-    private fun enableTouchPassThrough() {
+    private fun enableTouchPassThroughOld() {
         window.setFlags(
             WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
             WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
         )
     }
-    private fun disableTouchPassThrough() {
+    private fun disableTouchPassThroughOld() {
         window.clearFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE)
     }
 
-    private fun enableTouchPassThroughNew() {
-        // Make only the rootContainer pass through touches
+    private fun enableTouchPassThrough() {
+        // Calculate window height excluding bottom 100dp
+        val displayMetrics = resources.displayMetrics
+        val screenHeight = displayMetrics.heightPixels
+        val bottomMarginPx = (30 * resources.displayMetrics.density).toInt()
+
+        val params = window.attributes
+        params.flags = params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+        params.flags = params.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+
+        // Set window to cover entire screen EXCEPT bottom 100dp
+        params.width = WindowManager.LayoutParams.MATCH_PARENT
+        params.height = screenHeight - bottomMarginPx  // ✅ Exclude bottom 100dp
+        params.gravity = Gravity.TOP  // ✅ Align to top
+        params.x = 0
+        params.y = 0
+
+        window.attributes = params
+
         rootContainer.isClickable = false
         rootContainer.isFocusable = false
-
-        // Keep floatingContainer interactive
-        floatingContainer.isClickable = true
-        floatingContainer.isFocusable = true
-
-        window.setFlags(
-            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
-            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
-        )
     }
-    private fun disableTouchPassThroughNew() {
+    private fun disableTouchPassThrough() {
+        val params = window.attributes
+        params.flags = params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL.inv()
+        params.flags = params.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
+
+        params.width = WindowManager.LayoutParams.MATCH_PARENT
+        params.height = WindowManager.LayoutParams.MATCH_PARENT
+        params.gravity = Gravity.NO_GRAVITY
+        params.x = 0
+        params.y = 0
+
+        window.attributes = params
+
         rootContainer.isClickable = true
         rootContainer.isFocusable = true
-        window.clearFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL)
     }
-
 
 
 }
