@@ -1,14 +1,10 @@
 package com.aiworkout.nativeplugin;
 
 import android.app.Activity;
-import android.content.BroadcastReceiver;
-import android.content.Context;
 import android.content.Intent;
-import android.content.IntentFilter;
-import android.os.Build;
+import android.util.Log;
 
 import androidx.activity.result.ActivityResult;
-import androidx.core.content.ContextCompat;
 
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
@@ -21,31 +17,7 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 public class AIWorkoutNativePlugin extends Plugin {
 
     private AIWorkoutNative implementation = new AIWorkoutNative();
-    private PluginCall savedCall; // ✅ Store the call to emit events later
-
-    // ✅ BroadcastReceiver to listen for position confirmation
-    private final BroadcastReceiver positionReceiver = new BroadcastReceiver() {
-        @Override
-        public void onReceive(Context context, Intent intent) {
-            if (intent.getAction().equals("com.aiworkout.POSITION_CONFIRMED")) {
-                boolean confirmed = intent.getBooleanExtra("position_confirmed", false);
-                String status = intent.getStringExtra("status");
-                long timestamp = intent.getLongExtra("timestamp", 0);
-                String mode = intent.getStringExtra("mode");
-
-                // Emit event to Ionic side
-                JSObject ret = new JSObject();
-                ret.put("event", "positionConfirmed");
-                ret.put("positionConfirmed", confirmed);
-                ret.put("status", status);
-                ret.put("timestamp", timestamp);
-                ret.put("mode", mode);
-
-                // Notify listeners
-                notifyListeners("workoutEvent", ret);
-            }
-        }
-    };
+    private PluginCall savedCall;
 
     @PluginMethod
     public void echo(PluginCall call) {
@@ -55,22 +27,67 @@ public class AIWorkoutNativePlugin extends Plugin {
         call.resolve(ret);
     }
 
-    // ✅ START AI WORKOUT with event listener
+    // ✅ START AI WORKOUT with event listener using Manager
     @PluginMethod
     public void startWorkout(PluginCall call) {
         try {
             savedCall = call;
-            call.setKeepAlive(true); // ✅ Keep call alive for events
+            call.setKeepAlive(true);
 
             String mode = call.getString("mode", "squat");
 
-            // Register broadcast receiver
-            IntentFilter filter = new IntentFilter("com.aiworkout.POSITION_CONFIRMED");
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                getContext().registerReceiver(positionReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
-            } else {
-                ContextCompat.registerReceiver(getContext(), positionReceiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED);
-            }
+            // ✅ Set up listener using Manager (no more BroadcastReceiver)
+            WorkoutEventManager.INSTANCE.setListener(new WorkoutEventManager.WorkoutEventListener() {
+                @Override
+                public void onPositionConfirmed(String mode, long timestamp) {
+                    Log.d("AIWorkoutPlugin", "Position confirmed received - Mode: " + mode);
+
+                    // Emit event to Ionic side
+                    JSObject ret = new JSObject();
+                    ret.put("event", "positionConfirmed");
+                    ret.put("positionConfirmed", true);
+                    ret.put("status", "Position confirmed - workout starting");
+                    ret.put("timestamp", timestamp);
+                    ret.put("mode", mode);
+
+                    notifyListeners("workoutEvent", ret);
+                }
+
+                @Override
+                public void onWorkoutUpdate(int reps, long duration) {
+                    Log.d("AIWorkoutPlugin", "Workout update - Reps: " + reps);
+
+                    JSObject ret = new JSObject();
+                    ret.put("event", "workoutUpdate");
+                    ret.put("reps", reps);
+                    ret.put("duration", duration);
+
+                    notifyListeners("workoutEvent", ret);
+                }
+
+                @Override
+                public void onWorkoutStopped(int reps, long duration) {
+                    Log.d("AIWorkoutPlugin", "Workout stopped - Reps: " + reps);
+
+                    JSObject ret = new JSObject();
+                    ret.put("event", "workoutStopped");
+                    ret.put("reps", reps);
+                    ret.put("duration", duration);
+
+                    notifyListeners("workoutEvent", ret);
+                }
+
+                @Override
+                public void onShowIonicUI() {
+                    Log.d("AIWorkoutPlugin", "Show Ionic UI");
+
+                    JSObject ret = new JSObject();
+                    ret.put("event", "showIonicUI");
+                    ret.put("show", true);
+
+                    notifyListeners("workoutEvent", ret);
+                }
+            });
 
             Intent intent = new Intent(getContext(), PoseCoachActivity.class);
             intent.putExtra("workout_mode", mode);
@@ -78,18 +95,15 @@ public class AIWorkoutNativePlugin extends Plugin {
             startActivityForResult(call, intent, "workoutResultCallback");
 
         } catch (Exception e) {
+            Log.e("AIWorkoutPlugin", "Failed to start workout: " + e.getMessage());
             call.reject("Failed to start workout: " + e.getMessage());
         }
     }
 
     @ActivityCallback
     private void workoutResultCallback(PluginCall call, ActivityResult result) {
-        // Unregister receiver when activity finishes
-        try {
-            getContext().unregisterReceiver(positionReceiver);
-        } catch (Exception e) {
-            // Already unregistered
-        }
+        // ✅ Clear listener when activity finishes (no more BroadcastReceiver unregistration)
+        WorkoutEventManager.INSTANCE.clearListener();
 
         if (call == null) {
             return;
@@ -119,21 +133,30 @@ public class AIWorkoutNativePlugin extends Plugin {
             ret.put("message", "Workout cancelled or failed");
             call.resolve(ret);
         }
-
-        //call.release(ret); // ✅ Release the call
     }
 
+    // ✅ UPDATED - Direct method call instead of broadcast
     @PluginMethod
     public void stopWorkout(PluginCall call) {
         try {
-            Intent intent = new Intent("com.aiworkout.STOP_WORKOUT");
-            getContext().sendBroadcast(intent);
+            PoseCoachActivity activity = PoseCoachActivity.Companion.getInstance();
+            if (activity != null) {
+                activity.runOnUiThread(() -> {
+                    activity.stopWorkout();
+                });
 
-            JSObject ret = new JSObject();
-            ret.put("success", true);
-            ret.put("message", "Workout stop signal sent");
-            call.resolve(ret);
+                JSObject ret = new JSObject();
+                ret.put("success", true);
+                ret.put("message", "Workout stop signal sent");
+                call.resolve(ret);
+            } else {
+                JSObject ret = new JSObject();
+                ret.put("success", false);
+                ret.put("message", "Activity not found");
+                call.resolve(ret);
+            }
         } catch (Exception e) {
+            Log.e("AIWorkoutPlugin", "Failed to stop workout: " + e.getMessage());
             call.reject("Failed to stop workout: " + e.getMessage());
         }
     }

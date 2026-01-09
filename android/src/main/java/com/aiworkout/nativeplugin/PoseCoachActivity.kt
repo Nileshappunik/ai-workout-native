@@ -2,10 +2,7 @@ package com.aiworkout.nativeplugin
 
 import android.Manifest
 import android.annotation.SuppressLint
-import android.content.BroadcastReceiver
-import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
@@ -52,8 +49,8 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private lateinit var statusText: TextView
     private lateinit var tvCounter: TextView
     private lateinit var cameraContainer: FrameLayout
-    private lateinit var rootContainer: FrameLayout  // ✅ NEW
-    private lateinit var floatingContainer: FrameLayout  // ✅ NEW
+    private lateinit var rootContainer: FrameLayout
+    private lateinit var floatingContainer: FrameLayout
 
     private lateinit var poseDetector: PoseDetector
     private lateinit var tts: TextToSpeech
@@ -92,20 +89,14 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
     private val cameraExecutor = Executors.newSingleThreadExecutor()
 
-    private val stopWorkoutReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.action == "com.aiworkout.STOP_WORKOUT") {
-                stopButtonClickHandle()
-            }
-        }
-    }
-
-    @SuppressLint("UnspecifiedRegisterReceiverFlag", "ClickableViewAccessibility")
+    @SuppressLint("ClickableViewAccessibility")
     @ExperimentalGetImage
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // ✅ Make the entire activity window transparent
+        // Store instance reference
+        instance = this
+
         window.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
         setContentView(R.layout.activity_pose_coach)
 
@@ -121,8 +112,9 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             "burpee" -> Mode.BURPEE
             else -> Mode.SQUAT
         }
+
         floatingContainer = findViewById(R.id.floatingContainer)
-        rootContainer = findViewById(R.id.rootContainer)  // ✅ NEW
+        rootContainer = findViewById(R.id.rootContainer)
         cameraContainer = findViewById(R.id.cameraContainer)
         previewView = findViewById(R.id.previewView)
         overlay = findViewById(R.id.overlay)
@@ -140,8 +132,6 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
         setupSpeechRecognizer()
 
-        registerReceiver(stopWorkoutReceiver, IntentFilter("com.aiworkout.STOP_WORKOUT"))
-
         if (!hasPermissions()) {
             ActivityCompat.requestPermissions(
                 this,
@@ -157,19 +147,14 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         val btnStop = findViewById<Button>(R.id.btnStop)
 
         btnStart.setOnClickListener {
-            runState = RunState.RUNNING
-            exerciseCounter.reset()
-            hasAnnouncedStart = false
-            isPerfectPosition = false
-            positionConfirmedSent = false
-            tvCounter.text = "Reps: 0"
-            speak("Workout started. Get into position.")
+            startWorkout()
         }
 
         btnStop.setOnClickListener {
-            stopButtonClickHandle()
+            stopWorkout()
         }
     }
+
     @SuppressLint("ClickableViewAccessibility")
     private fun setupDraggableCamera() {
         floatingContainer.setOnTouchListener { view, event ->
@@ -181,26 +166,21 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                     dY = view.y - event.rawY
                 }
                 MotionEvent.ACTION_MOVE -> {
-                    // Calculate new position
                     val newX = event.rawX + dX
                     val newY = event.rawY + dY
 
-                    // Get screen dimensions
                     val displayMetrics = resources.displayMetrics
                     val screenWidth = displayMetrics.widthPixels
                     val screenHeight = displayMetrics.heightPixels
 
-                    // Get container dimensions
                     val containerWidth = view.width
                     val containerHeight = view.height
 
-                    // Define boundaries - FULL SCREEN (removed bottom restriction)
                     val minX = 0f
                     val maxX = (screenWidth - containerWidth).toFloat()
                     val minY = 0f
-                    val maxY = (screenHeight - containerHeight).toFloat()  // ✅ No bottom margin restriction
+                    val maxY = (screenHeight - containerHeight).toFloat()
 
-                    // Constrain position within full screen boundaries
                     val constrainedX = newX.coerceIn(minX, maxX)
                     val constrainedY = newY.coerceIn(minY, maxY)
 
@@ -215,7 +195,6 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         }
     }
 
-    // ✅ MODIFIED - Minimize camera and make background transparent
     private fun minimizeCameraView() {
         if (isMinimized) return
         isMinimized = true
@@ -226,18 +205,18 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         val heightPx = (200 * resources.displayMetrics.density).toInt()
         val marginPx = (16 * resources.displayMetrics.density).toInt()
 
-        // Update floating container position - TOP RIGHT
         val params = floatingContainer.layoutParams as FrameLayout.LayoutParams
         params.width = widthPx
         params.height = heightPx + (40 * resources.displayMetrics.density).toInt()
-        params.gravity = Gravity.TOP or Gravity.END  // ✅ TOP RIGHT position
-        params.setMargins(0, marginPx, marginPx, 0)  // ✅ Top and right margins
+        params.gravity = Gravity.TOP or Gravity.END
+        params.setMargins(0, marginPx, marginPx, 0)
 
         floatingContainer.layoutParams = params
         floatingContainer.elevation = 12f
         floatingContainer.setBackgroundColor(Color.BLACK)
         floatingContainer.setPadding(4, 4, 4, 4)
 
+        tvCounter.visibility = View.VISIBLE
         tvCounter.setBackgroundColor(0xCC000000.toInt())
         tvCounter.textAlignment = View.TEXT_ALIGNMENT_CENTER
 
@@ -246,7 +225,9 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         statusText.visibility = View.GONE
 
         enableTouchPassThrough()
-        sendIonicShowUIBroadcast()
+
+        // ✅ Notify through manager instead of broadcast
+        WorkoutEventManager.notifyShowIonicUI()
     }
 
     private fun restoreCameraView() {
@@ -254,7 +235,7 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         isMinimized = false
 
         rootContainer.setBackgroundColor(Color.BLACK)
-        disableTouchPassThrough()   // ✅ restore touches
+        disableTouchPassThrough()
 
         val params = floatingContainer.layoutParams as FrameLayout.LayoutParams
         params.width = ViewGroup.LayoutParams.MATCH_PARENT
@@ -265,7 +246,7 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         floatingContainer.layoutParams = params
         floatingContainer.elevation = 0f
         floatingContainer.setBackgroundColor(Color.TRANSPARENT)
-
+        tvCounter.visibility = View.GONE
         tvCounter.setBackgroundColor(Color.TRANSPARENT)
 
         findViewById<Button>(R.id.btnStart).visibility = View.VISIBLE
@@ -282,7 +263,7 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 //        }
     }
 
-    private fun checkBodySetup(pose: Pose,imageWidth: Int,imageHeight: Int): String? {
+    private fun checkBodySetup(pose: Pose, imageWidth: Int, imageHeight: Int): String? {
         val ls = pose.getPoseLandmark(PoseLandmark.LEFT_SHOULDER)
         val rs = pose.getPoseLandmark(PoseLandmark.RIGHT_SHOULDER)
         val la = pose.getPoseLandmark(PoseLandmark.LEFT_ANKLE)
@@ -493,14 +474,10 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private fun handleCommand(cmd: String) {
         when {
             cmd.contains("start") -> {
-                runState = RunState.RUNNING
-                exerciseCounter.reset()
-                hasAnnouncedStart = false
-                speak("Workout started. Get into position.")
+                startWorkout()
             }
             cmd.contains("stop") -> {
-                runState = RunState.IDLE
-                speak("Workout stopped. You did ${exerciseCounter.getCount()} repetitions.")
+                stopWorkout()
             }
             cmd.contains("squat") -> {
                 mode = Mode.SQUAT
@@ -549,9 +526,30 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         elevenTts.speak(text)
     }
 
-    private fun stopButtonClickHandle() {
+    // ✅ NEW - Extracted start workout method
+    private fun startWorkout() {
+        runState = RunState.RUNNING
+        exerciseCounter.reset()
+        hasAnnouncedStart = false
+        isPerfectPosition = false
+        positionConfirmedSent = false
+        tvCounter.text = "Reps: 0"
+        speak("Workout started. Get into position.")
+    }
+
+    // ✅ NEW - Public method accessible from plugin
+    fun stopWorkout() {
         runState = RunState.IDLE
-        speak("Workout stopped. You completed ${exerciseCounter.getCount()} repetitions.")
+        val reps = exerciseCounter.getCount()
+        val duration = if (workoutStartTime > 0) {
+            (System.currentTimeMillis() - workoutStartTime) / 1000
+        } else 0L
+
+        speak("Workout stopped. You completed $reps repetitions.")
+
+        // ✅ Notify through manager instead of broadcast
+        WorkoutEventManager.notifyWorkoutStopped(reps, duration.toInt().toLong())
+
         sendWorkoutResults(completed = false)
     }
 
@@ -580,7 +578,7 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
     override fun onDestroy() {
         super.onDestroy()
-        try { unregisterReceiver(stopWorkoutReceiver) } catch (_: Exception) {}
+        instance = null
         try { speechRecognizer.destroy() } catch (_: Exception) {}
         try { tts.shutdown() } catch (_: Exception) {}
         try { poseDetector.close() } catch (_: Exception) {}
@@ -621,28 +619,18 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         return (100 * (1.0 - t)).toInt().coerceIn(0, 100)
     }
 
+    // ✅ UPDATED - Use manager instead of broadcast
     private fun sendPositionConfirmed() {
-        Log.e("NileshPosition","positionConfirmedSent:- $positionConfirmedSent")
+        Log.e("NileshPosition", "positionConfirmedSent:- $positionConfirmedSent")
         if (!positionConfirmedSent) {
-            val broadcastIntent = Intent("com.aiworkout.POSITION_CONFIRMED")
-            broadcastIntent.putExtra("position_confirmed", true)
-            broadcastIntent.putExtra("status", "Position confirmed - workout starting")
-            broadcastIntent.putExtra("timestamp", System.currentTimeMillis())
-            broadcastIntent.putExtra("mode", mode.name)
-            sendBroadcast(broadcastIntent)
-
             positionConfirmedSent = true
             workoutStartTime = System.currentTimeMillis()
 
-            Log.e("NileshPosition", "Broadcast sent - position confirmed")
-        }
-    }
+            // ✅ Notify through manager instead of broadcast
+            WorkoutEventManager.notifyPositionConfirmed(mode.name, workoutStartTime)
 
-    // ✅ NEW - Send broadcast to Ionic to show UI
-    private fun sendIonicShowUIBroadcast() {
-        val intent = Intent("com.aiworkout.SHOW_IONIC_UI")
-        intent.putExtra("show_ui", true)
-        sendBroadcast(intent)
+            Log.e("NileshPosition", "Position confirmed sent through manager")
+        }
     }
 
     private fun sendWorkoutResults(completed: Boolean = true) {
@@ -660,32 +648,22 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         finish()
     }
 
-
-    //Disable touch on Android window when minimized
-    private fun enableTouchPassThroughOld() {
-        window.setFlags(
-            WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
-            WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-        )
-    }
-    private fun disableTouchPassThroughOld() {
-        window.clearFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE)
-    }
-
     private fun enableTouchPassThrough() {
-        // Calculate window height excluding bottom 100dp
         val displayMetrics = resources.displayMetrics
         val screenHeight = displayMetrics.heightPixels
-        val bottomMarginPx = (30 * resources.displayMetrics.density).toInt()
+        val bottomMarginPx = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            (200 * resources.displayMetrics.density).toInt()   // Android 14+
+        } else {
+            (30 * resources.displayMetrics.density).toInt()    // Android 13 and below
+        }
 
         val params = window.attributes
         params.flags = params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
         params.flags = params.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
 
-        // Set window to cover entire screen EXCEPT bottom 100dp
         params.width = WindowManager.LayoutParams.MATCH_PARENT
-        params.height = screenHeight - bottomMarginPx  // ✅ Exclude bottom 100dp
-        params.gravity = Gravity.TOP  // ✅ Align to top
+        params.height = screenHeight - bottomMarginPx
+        params.gravity = Gravity.TOP
         params.x = 0
         params.y = 0
 
@@ -694,6 +672,7 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         rootContainer.isClickable = false
         rootContainer.isFocusable = false
     }
+
     private fun disableTouchPassThrough() {
         val params = window.attributes
         params.flags = params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL.inv()
@@ -711,5 +690,7 @@ class PoseCoachActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         rootContainer.isFocusable = true
     }
 
-
+    companion object {
+        var instance: PoseCoachActivity? = null
+    }
 }

@@ -3,7 +3,8 @@
     android:id="@+id/rootContainer"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@android:color/black">
+    android:background="@android:color/black"
+    android:fitsSystemWindows="true">
 
     <!-- Camera container for PiP -->
     <FrameLayout
@@ -32,6 +33,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="Reps: 0"
+            android:visibility="gone"
             android:textColor="@android:color/white"
             android:textSize="16sp"
             android:layout_gravity="bottom|end"
