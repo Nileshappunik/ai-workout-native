@@ -1,14 +1,10 @@
 package com.aiworkout.nativeplugin;
 
 import android.app.Activity;
-import android.content.BroadcastReceiver;
-import android.content.Context;
 import android.content.Intent;
-import android.content.IntentFilter;
-import android.os.Build;
+import android.util.Log;
 
 import androidx.activity.result.ActivityResult;
-import androidx.core.content.ContextCompat;
 
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
@@ -21,57 +17,94 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 public class AIWorkoutNativePlugin extends Plugin {
 
     private AIWorkoutNative implementation = new AIWorkoutNative();
-    // ✅ Existing echo method (keep)
+    private PluginCall savedCall;
+
     @PluginMethod
     public void echo(PluginCall call) {
         String value = call.getString("value");
-
         JSObject ret = new JSObject();
         ret.put("value", implementation.echo(value));
         call.resolve(ret);
     }
-    
-    // ✅ START AI WORKOUT (Launch Native Pose Screen)
-//    @PluginMethod
-//        public void startWorkout(PluginCall call) {
-//        try {
-//            // Get optional parameters
-//            String mode = call.getString("mode", "squat"); // squat, plank, yoga
-//
-//            Intent intent = new Intent(getContext(), PoseCoachActivity.class);
-//            intent.putExtra("workout_mode", mode);
-//            getActivity().startActivity(intent);
-//
-//            JSObject ret = new JSObject();
-//            ret.put("success", true);
-//            ret.put("message", "Workout started with mode: " + mode);
-//            call.resolve(ret);
-//        } catch (Exception e) {
-//            call.reject("Failed to start workout: " + e.getMessage());
-//        }
-//    }
 
-    // ✅ START AI WORKOUT (Launch Native Pose Screen with callback)
+    // ✅ START AI WORKOUT with event listener using Manager
     @PluginMethod
     public void startWorkout(PluginCall call) {
         try {
-            // Get optional parameters
+            savedCall = call;
+            call.setKeepAlive(true);
+
             String mode = call.getString("mode", "squat");
+
+            // ✅ Set up listener using Manager (no more BroadcastReceiver)
+            WorkoutEventManager.INSTANCE.setListener(new WorkoutEventManager.WorkoutEventListener() {
+                @Override
+                public void onPositionConfirmed(String mode, long timestamp) {
+                    Log.d("AIWorkoutPlugin", "Position confirmed received - Mode: " + mode);
+
+                    // Emit event to Ionic side
+                    JSObject ret = new JSObject();
+                    ret.put("event", "positionConfirmed");
+                    ret.put("positionConfirmed", true);
+                    ret.put("status", "Position confirmed - workout starting");
+                    ret.put("timestamp", timestamp);
+                    ret.put("mode", mode);
+
+                    notifyListeners("workoutEvent", ret);
+                }
+
+                @Override
+                public void onWorkoutUpdate(int reps, long duration) {
+                    Log.d("AIWorkoutPlugin", "Workout update - Reps: " + reps);
+
+                    JSObject ret = new JSObject();
+                    ret.put("event", "workoutUpdate");
+                    ret.put("reps", reps);
+                    ret.put("duration", duration);
+
+                    notifyListeners("workoutEvent", ret);
+                }
+
+                @Override
+                public void onWorkoutStopped(int reps, long duration) {
+                    Log.d("AIWorkoutPlugin", "Workout stopped - Reps: " + reps);
+
+                    JSObject ret = new JSObject();
+                    ret.put("event", "workoutStopped");
+                    ret.put("reps", reps);
+                    ret.put("duration", duration);
+
+                    notifyListeners("workoutEvent", ret);
+                }
+
+                @Override
+                public void onShowIonicUI() {
+                    Log.d("AIWorkoutPlugin", "Show Ionic UI");
+
+                    JSObject ret = new JSObject();
+                    ret.put("event", "showIonicUI");
+                    ret.put("show", true);
+
+                    notifyListeners("workoutEvent", ret);
+                }
+            });
 
             Intent intent = new Intent(getContext(), PoseCoachActivity.class);
             intent.putExtra("workout_mode", mode);
 
-            // Use startActivityForResult to get callback
             startActivityForResult(call, intent, "workoutResultCallback");
 
         } catch (Exception e) {
+            Log.e("AIWorkoutPlugin", "Failed to start workout: " + e.getMessage());
             call.reject("Failed to start workout: " + e.getMessage());
         }
     }
 
-    // ✅ Handle the result from PoseCoachActivity
     @ActivityCallback
     private void workoutResultCallback(PluginCall call, ActivityResult result) {
+        // ✅ Clear listener when activity finishes (no more BroadcastReceiver unregistration)
+        WorkoutEventManager.INSTANCE.clearListener();
+
         if (call == null) {
             return;
         }
@@ -81,7 +114,6 @@ public class AIWorkoutNativePlugin extends Plugin {
         if (result.getResultCode() == Activity.RESULT_OK && result.getData() != null) {
             Intent data = result.getData();
 
-            // Get data from the activity
             boolean positionConfirmed = data.getBooleanExtra("position_confirmed", false);
             int finalReps = data.getIntExtra("final_reps", 0);
             long duration = data.getLongExtra("duration", 0);
@@ -103,37 +135,42 @@ public class AIWorkoutNativePlugin extends Plugin {
         }
     }
 
-    // ✅ STOP WORKOUT (Optional – future cleanup)
+    // ✅ UPDATED - Direct method call instead of broadcast
     @PluginMethod
     public void stopWorkout(PluginCall call) {
         try {
-            // Send broadcast to stop the workout activity
-            Intent intent = new Intent("com.aiworkout.STOP_WORKOUT");
-            getContext().sendBroadcast(intent);
+            PoseCoachActivity activity = PoseCoachActivity.Companion.getInstance();
+            if (activity != null) {
+                activity.runOnUiThread(() -> {
+                    activity.stopWorkout();
+                });
 
-            JSObject ret = new JSObject();
-            ret.put("success", true);
-            ret.put("message", "Workout stop signal sent");
-            call.resolve(ret);
+                JSObject ret = new JSObject();
+                ret.put("success", true);
+                ret.put("message", "Workout stop signal sent");
+                call.resolve(ret);
+            } else {
+                JSObject ret = new JSObject();
+                ret.put("success", false);
+                ret.put("message", "Activity not found");
+                call.resolve(ret);
+            }
         } catch (Exception e) {
+            Log.e("AIWorkoutPlugin", "Failed to stop workout: " + e.getMessage());
             call.reject("Failed to stop workout: " + e.getMessage());
         }
     }
 
-    // ✅ Get Workout Stats (Optional - for retrieving results)
     @PluginMethod
     public void getWorkoutStats(PluginCall call) {
         try {
-            // You can implement SharedPreferences to store/retrieve workout stats
             JSObject ret = new JSObject();
             ret.put("success", true);
-            ret.put("reps", 0); // Placeholder - implement actual stats retrieval
+            ret.put("reps", 0);
             ret.put("duration", 0);
             call.resolve(ret);
         } catch (Exception e) {
             call.reject("Failed to get workout stats: " + e.getMessage());
         }
     }
-
-
 }

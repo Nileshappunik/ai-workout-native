@@ -10,14 +10,18 @@
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
 
-    <application>
+    <application
+        android:hardwareAccelerated="true"
+        android:largeHeap="true">
         <!-- Register the PoseCoachActivity -->
         <activity
             android:name=".PoseCoachActivity"
             android:exported="false"
+            android:hardwareAccelerated="true"
             android:screenOrientation="portrait"
-            android:theme="@style/Theme.AppCompat.Light.NoActionBar"
-            android:configChanges="orientation|screenSize|keyboardHidden" />
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:launchMode="singleTask"
+            android:theme="@style/TransparentTheme"/>
     </application>
 
 </manifest>
